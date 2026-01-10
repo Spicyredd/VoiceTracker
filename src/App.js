@@ -169,7 +169,7 @@ function App() {
           <div className="input-group">
             <label>Surrounding Environment / Objects</label>
             <textarea
-              placeholder="Table&#10;Chair&#10;Mic"
+              placeholder="Example(Separate By Enter):&#10;Table&#10;Chair&#10;Mic"
               value={surroundings}
               onChange={(e) => setSurroundings(e.target.value)}
               rows="4"
