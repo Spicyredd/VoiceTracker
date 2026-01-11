@@ -1,23 +1,71 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import "./App.css";
 
+// Helper to load data from LocalStorage safely
+const loadState = (key, defaultValue) => {
+  const saved = localStorage.getItem(key);
+  if (!saved) return defaultValue;
+  try {
+    return JSON.parse(saved);
+  } catch (e) {
+    return defaultValue;
+  }
+};
+
+// Helper to restore Date objects within logs (JSON stores them as strings)
+const loadLogs = () => {
+  const saved = localStorage.getItem("session_logs");
+  if (!saved) return [];
+  try {
+    const parsed = JSON.parse(saved);
+    return parsed.map((log) => ({
+      ...log,
+      startTime: new Date(log.startTime),
+      endTime: new Date(log.endTime),
+    }));
+  } catch (e) {
+    return [];
+  }
+};
+
 function App() {
-  const [setupDone, setSetupDone] = useState(false);
-  const [participants, setParticipants] = useState([
-    { id: 1, name: "Participant A", role: "Participant" },
-    { id: 2, name: "Participant B", role: "Participant" },
-    { id: 3, name: "Participant C", role: "Participant" },
-  ]);
+  // --- STATE INITIALIZATION WITH PERSISTENCE ---
+  const [setupDone, setSetupDone] = useState(() => loadState("session_setupDone", false));
+  const [participants, setParticipants] = useState(() =>
+    loadState("session_participants", [
+      { id: 1, name: "Participant A", role: "Participant" },
+      { id: 2, name: "Participant B", role: "Participant" },
+      { id: 3, name: "Participant C", role: "Participant" },
+    ])
+  );
 
-  const [surroundings, setSurroundings] = useState("");
-  // NEW: Dark Mode State
-  const [darkMode, setDarkMode] = useState(false);
+  const [surroundings, setSurroundings] = useState(() => loadState("session_surroundings", ""));
+  const [darkMode, setDarkMode] = useState(() => loadState("session_darkMode", false));
 
-  const [activeId, setActiveId] = useState(null);
-  const [currentStart, setCurrentStart] = useState(null);
-  const [logs, setLogs] = useState([]);
+  const [activeId, setActiveId] = useState(() => loadState("session_activeId", null));
+
+  // Need to convert string back to Date if it exists
+  const [currentStart, setCurrentStart] = useState(() => {
+    const saved = localStorage.getItem("session_currentStart");
+    return saved && saved !== "null" ? new Date(JSON.parse(saved)) : null;
+  });
+
+  const [logs, setLogs] = useState(() => loadLogs());
   const [, setTick] = useState(0);
 
+  // --- PERSISTENCE EFFECT ---
+  // Save state to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem("session_setupDone", JSON.stringify(setupDone));
+    localStorage.setItem("session_participants", JSON.stringify(participants));
+    localStorage.setItem("session_surroundings", JSON.stringify(surroundings));
+    localStorage.setItem("session_darkMode", JSON.stringify(darkMode));
+    localStorage.setItem("session_activeId", JSON.stringify(activeId));
+    localStorage.setItem("session_currentStart", JSON.stringify(currentStart));
+    localStorage.setItem("session_logs", JSON.stringify(logs));
+  }, [setupDone, participants, surroundings, darkMode, activeId, currentStart, logs]);
+
+  // --- TIMER TICK ---
   useEffect(() => {
     let interval = null;
     if (activeId !== null) {
@@ -28,7 +76,7 @@ function App() {
     return () => clearInterval(interval);
   }, [activeId]);
 
-  // NEW: Apply Dark Mode class to body
+  // --- DARK MODE CLASS ---
   useEffect(() => {
     if (darkMode) {
       document.body.classList.add("dark-mode");
@@ -49,6 +97,7 @@ function App() {
 
   const handleReset = () => {
     if (window.confirm("Are you sure you want to reset? All data will be lost.")) {
+      localStorage.clear(); // Clear storage
       window.location.reload();
     }
   };
@@ -78,31 +127,55 @@ function App() {
     document.body.removeChild(link);
   };
 
-  const handleToggle = (participantId) => {
+  // Wrapped in useCallback so it works correctly inside the keyboard event listener
+  const handleToggle = useCallback((participantId) => {
     const now = new Date();
 
     if (activeId !== null) {
-      const newLog = {
-        id: Date.now(),
-        participantId: activeId,
-        startTime: currentStart,
-        endTime: now,
-        duration: Math.floor((now - currentStart) / 1000),
-      };
-      setLogs((prev) => [newLog, ...prev]);
+      // Logic: If activeId is NOT null, it means someone was speaking.
+      // We must check if currentStart exists to calculate duration.
+      if (currentStart) {
+        const newLog = {
+          id: Date.now(),
+          participantId: activeId,
+          startTime: currentStart,
+          endTime: now,
+          duration: Math.floor((now - currentStart) / 1000),
+        };
+        setLogs((prev) => [newLog, ...prev]);
+      }
     }
 
     if (activeId === participantId) {
+      // Toggle OFF if clicking the same person
       setActiveId(null);
       setCurrentStart(null);
     } else {
+      // Toggle ON new person
       setActiveId(participantId);
       setCurrentStart(now);
     }
-  };
+  }, [activeId, currentStart]);
+
+  // --- KEYBOARD SHORTCUTS ---
+  useEffect(() => {
+    if (!setupDone) return;
+
+    const handleKeyDown = (e) => {
+      // Check which key was pressed and toggle specific IDs
+      // Assumes IDs are 1, 2, 3 based on initial state
+      if (e.key === "1") handleToggle(1);
+      if (e.key === "2") handleToggle(2);
+      if (e.key === "3") handleToggle(3);
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [setupDone, handleToggle]);
+
 
   const formatTime = (dateObj) => {
-    if (!dateObj) return "--:--:--";
+    if (!dateObj || !(dateObj instanceof Date)) return "--:--:--";
     return dateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   };
 
@@ -132,7 +205,6 @@ function App() {
     return total;
   };
 
-  // Helper component for the Toggle Button
   const DarkModeToggle = () => (
     <button
       className="btn-icon"
@@ -148,7 +220,6 @@ function App() {
   if (!setupDone) {
     return (
       <div className="setup-container">
-        {/* Toggle placed in top right corner absolutely */}
         <div style={{ position: 'absolute', top: 20, right: 20 }}>
           <DarkModeToggle />
         </div>
@@ -203,9 +274,9 @@ function App() {
                 className={`participant-card ${isActive ? "active" : ""}`}
                 onClick={() => handleToggle(p.id)}
               >
-                <h3>{p.name}</h3>
+                <h3>{p.name} <span style={{ fontSize: '0.8em', opacity: 0.7 }}>[{p.id}]</span></h3>
                 <div className="current-timer">{formatDuration(totalSeconds)}</div>
-                <span className="status">{isActive ? "SPEAKING NOW..." : "Tap to Continue"}</span>
+                <span className="status">{isActive ? "SPEAKING NOW..." : "Tap or Press " + p.id}</span>
               </button>
             );
           })}
@@ -224,7 +295,8 @@ function App() {
               </thead>
               <tbody>
                 {logs.map((log) => {
-                  const name = participants.find((p) => p.id === log.participantId).name;
+                  const p = participants.find((p) => p.id === log.participantId);
+                  const name = p ? p.name : "Unknown";
                   return (
                     <tr key={log.id}>
                       <td>{name}</td>
